@@ -110,34 +110,35 @@ async def _poll_and_update(
             status = session.get("status", "unknown")
             logger.info("Session %s status: %s", session_id, status)
 
-            await log_session_update(session_id, status)
+            if status not in terminal_statuses:
+                await log_session_update(session_id, status)
+                continue
 
-            if status in terminal_statuses:
-                status_label = "completed" if status == "finished" else status
-                pull_requests = (
-                    session.get("pull_requests")
-                    or session.get("structured_output", {}).get("pull_requests")
-                    or []
-                )
-                pr_text = ""
-                if pull_requests:
-                    pr_links = [f"- {pr.get('url', pr)}" for pr in pull_requests]
-                    pr_text = "\n\n**Pull Requests:**\n" + "\n".join(pr_links)
+            status_label = "completed" if status == "finished" else status
+            pull_requests = (
+                session.get("pull_requests")
+                or session.get("structured_output", {}).get("pull_requests")
+                or []
+            )
+            pr_text = ""
+            if pull_requests:
+                pr_links = [f"- {pr.get('url', pr)}" for pr in pull_requests]
+                pr_text = "\n\n**Pull Requests:**\n" + "\n".join(pr_links)
 
-                body = (
-                    f"🤖 **Devin session {status_label}**\n\n"
-                    f"Session: {session_url}\n"
-                    f"Status: `{status}`"
-                    f"{pr_text}"
-                )
-                await post_issue_comment(owner, repo, issue_number, body)
+            body = (
+                f"🤖 **Devin session {status_label}**\n\n"
+                f"Session: {session_url}\n"
+                f"Status: `{status}`"
+                f"{pr_text}"
+            )
+            await post_issue_comment(owner, repo, issue_number, body)
 
-                await log_session_update(
-                    session_id,
-                    status,
-                    {"pull_requests": pull_requests} if pull_requests else None,
-                )
-                return
+            await log_session_update(
+                session_id,
+                status,
+                {"pull_requests": pull_requests} if pull_requests else None,
+            )
+            return
 
         # Timeout
         await post_issue_comment(
