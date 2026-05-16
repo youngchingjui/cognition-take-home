@@ -29,5 +29,16 @@ services:
       db:
         condition: service_healthy
 
+  smee:
+    image: node:20-alpine
+    restart: unless-stopped
+    entrypoint: ["sh", "-c", "npm install -g smee-client && smee --url $${SMEE_URL} --target http://app:8000/webhook/github"]
+    env_file:
+      - .env
+    depends_on:
+      - app
+    profiles:
+      - dev
+
 volumes:
   pgdata:

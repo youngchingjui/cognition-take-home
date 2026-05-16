@@ -98,6 +98,18 @@ docker compose up --build
 This starts the webhook server on port **8000** with a Postgres database for logging.
 Open **http://localhost:8000** to view the dashboard.
 
+#### Include Smee in Docker Compose (local development)
+
+To run Smee alongside the app and database in a single command, add `SMEE_URL` to your `.env` file and start the `dev` profile:
+
+```bash
+docker compose --profile dev up --build
+```
+
+This starts the app, Postgres, **and** the Smee client — no separate terminal needed. The Smee service forwards webhooks from your `SMEE_URL` channel to the app container automatically.
+
+> **Note:** The Smee service only starts when using the `dev` profile. A plain `docker compose up` skips it, which is the right default for production.
+
 #### Run without Docker
 
 If you prefer to run the server directly:
@@ -206,11 +218,12 @@ ruff format .
 
 1. Install dependencies: `pip install -e ".[dev]"`
 2. Copy `.env.example` to `.env` and fill in your credentials (see [Setup](#setup))
-3. Create a Smee channel at [smee.io/new](https://smee.io/new)
-4. In terminal 1: `smee --url https://smee.io/<your-channel-id> --target http://localhost:8000/webhook/github`
-5. In terminal 2: `uvicorn webhook.server:app --host 0.0.0.0 --port 8000`
-6. Configure a GitHub repo webhook to point to your Smee URL (see [Step 5](#5-configure-webhooks-on-your-repositories))
-7. Label an issue with `devin-fix` — you should see the webhook payload in your smee terminal and the server processing it
+3. Create a Smee channel at [smee.io/new](https://smee.io/new) and add `SMEE_URL=https://smee.io/<your-channel-id>` to your `.env`
+4. Run everything: `docker compose --profile dev up --build`
+5. Configure a GitHub repo webhook to point to your Smee URL (see [Step 5](#5-configure-webhooks-on-your-repositories))
+6. Label an issue with `devin-fix` — you should see the webhook payload in your smee logs and the server processing it
+
+> **Alternative (without Docker):** Run `smee` and `uvicorn` in separate terminals as described in [Step 4](#4-local-development-with-smeeio).
 
 ## Deployment
 
