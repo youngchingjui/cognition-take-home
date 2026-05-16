@@ -14,6 +14,7 @@ os.environ.setdefault("DEVIN_ORG_ID", "org_test")
 os.environ.setdefault("GITHUB_TOKEN", "ghp_test")
 os.environ.setdefault("GITHUB_WEBHOOK_SECRET", "test_secret")
 
+from webhook.devin_client import DevinAPIError  # noqa: E402
 from webhook.server import app  # noqa: E402
 
 
@@ -160,3 +161,33 @@ async def test_invalid_signature_rejected(client):
         },
     )
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+@patch("webhook.server.log_webhook_event", new_callable=AsyncMock)
+@patch("webhook.server.create_session", new_callable=AsyncMock)
+async def test_devin_api_403_returns_descriptive_error(mock_create, mock_log, client):
+    mock_create.side_effect = DevinAPIError(
+        status_code=403,
+        detail=(
+            "Failed to create Devin session: 403 Forbidden. "
+            "Ensure your DEVIN_API_KEY belongs to a service user with the "
+            "'ManageOrgSessions' permission and that DEVIN_ORG_ID is correct. "
+            "Response: {}"
+        ),
+        response_body="{}",
+    )
+
+    data = _make_issue_labeled_payload()
+    payload = json.dumps(data).encode()
+    resp = await client.post(
+        "/webhook/github",
+        content=payload,
+        headers={
+            "X-GitHub-Event": "issues",
+            "X-Hub-Signature-256": _sign(payload),
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp.status_code == 502
+    assert "ManageOrgSessions" in resp.json()["detail"]

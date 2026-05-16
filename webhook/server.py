@@ -20,7 +20,7 @@ from webhook.database import (
     log_session_update,
     log_webhook_event,
 )
-from webhook.devin_client import create_session, get_session
+from webhook.devin_client import DevinAPIError, create_session, get_session
 from webhook.github_client import post_issue_comment
 
 logging.basicConfig(
@@ -240,6 +240,9 @@ async def github_webhook(
     prompt = _build_prompt(issue, repo_full_name)
     try:
         session_resp = await create_session(prompt)
+    except DevinAPIError as exc:
+        logger.error("Devin API error for %s#%d: %s", repo_full_name, issue_number, exc.detail)
+        raise HTTPException(status_code=502, detail=exc.detail)
     except Exception:
         logger.exception("Failed to create Devin session for %s#%d", repo_full_name, issue_number)
         raise HTTPException(status_code=502, detail="Failed to create Devin session")
