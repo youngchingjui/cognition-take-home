@@ -85,24 +85,62 @@ openssl rand -hex 32
 ```
 
 1. Copy the generated value and paste it into your `.env` file as `GITHUB_WEBHOOK_SECRET`
-2. Use the **same value** when configuring the webhook in each GitHub repository (see [Step 4](#4-configure-webhooks-on-your-repositories) below)
+2. Use the **same value** when configuring the webhook in each GitHub repository (see [Step 5](#5-configure-webhooks-on-your-repositories) below)
 
 > **Note:** If `GITHUB_WEBHOOK_SECRET` is left empty, the server will skip signature verification and accept all incoming requests. This is fine for local development, but you should always set a secret in production.
 
-### 3. Run the Server
+### 3. Local Development with Smee.io
+
+GitHub webhooks require a publicly accessible URL. During local development, use [**smee.io**](https://smee.io) — a free webhook proxy that forwards payloads from GitHub to your local machine.
+
+#### 3a. Create a Smee Channel
+
+1. Go to [**https://smee.io/new**](https://smee.io/new)
+2. You'll be redirected to a unique URL like `https://smee.io/AbCdEfGhIjKl`
+3. Copy this URL — you'll use it as the **Payload URL** when configuring your GitHub webhook (Step 5), and as the `--url` argument for the smee client below
+
+#### 3b. Install the Smee Client
+
+```bash
+npm install -g smee-client
+```
+
+> **Note:** If you don't have Node.js/npm installed, you can also use the [**smee-client Python package**](https://pypi.org/project/pysmee/): `pip install pysmee`
+
+#### 3c. Start the Smee Client
+
+In a **separate terminal**, run:
+
+```bash
+smee --url https://smee.io/<your-channel-id> --target http://localhost:8000/webhook/github
+```
+
+Replace `https://smee.io/<your-channel-id>` with your actual Smee channel URL from Step 3a.
+
+This will listen for webhook deliveries on your Smee channel and forward them to your local server at `http://localhost:8000/webhook/github`.
+
+> **Tip:** Keep this terminal open while developing. The smee client must be running to receive webhooks locally.
+
+### 4. Run the Server
 
 ```bash
 uvicorn webhook.server:app --host 0.0.0.0 --port 8000
 ```
 
-### 4. Configure Webhooks on Your Repositories
+You should now have two terminals running:
+1. The **smee client** (forwarding webhooks from GitHub → localhost)
+2. The **uvicorn server** (processing the webhooks)
+
+### 5. Configure Webhooks on Your Repositories
 
 For each repository you want to monitor:
 
 1. Go to your repository's webhook settings: `https://github.com/<owner>/<repo>/settings/hooks`
    (or navigate to **Settings → Webhooks** in the GitHub repo)
 2. Click **Add webhook**
-3. Set the **Payload URL** to: `https://<your-server>/webhook/github`
+3. Set the **Payload URL** to:
+   - **For local development:** Your Smee channel URL (e.g. `https://smee.io/AbCdEfGhIjKl`) from [Step 3a](#3a-create-a-smee-channel)
+   - **For production:** `https://<your-server>/webhook/github`
 4. Set **Content type** to: `application/json`
 5. Set the **Secret** to the same value you saved as `GITHUB_WEBHOOK_SECRET` in your `.env` file
 6. Under **Which events would you like to trigger this webhook?**, select **Let me select individual events** and check **Issues**
@@ -110,7 +148,7 @@ For each repository you want to monitor:
 
 > **Important:** The **Secret** field in GitHub must exactly match the `GITHUB_WEBHOOK_SECRET` value in your `.env` file. This is how the server verifies that webhook payloads are genuinely from GitHub.
 
-### 5. Create the `devin-fix` Label
+### 6. Create the `devin-fix` Label
 
 In each subscribed repository, create a label named `devin-fix`:
 
@@ -150,6 +188,16 @@ ruff check .
 # Format
 ruff format .
 ```
+
+### Running Locally (Quick Start)
+
+1. Install dependencies: `pip install -e ".[dev]"`
+2. Copy `.env.example` to `.env` and fill in your credentials (see [Setup](#setup))
+3. Create a Smee channel at [smee.io/new](https://smee.io/new)
+4. In terminal 1: `smee --url https://smee.io/<your-channel-id> --target http://localhost:8000/webhook/github`
+5. In terminal 2: `uvicorn webhook.server:app --host 0.0.0.0 --port 8000`
+6. Configure a GitHub repo webhook to point to your Smee URL (see [Step 5](#5-configure-webhooks-on-your-repositories))
+7. Label an issue with `devin-fix` — you should see the webhook payload in your smee terminal and the server processing it
 
 ## Deployment
 
