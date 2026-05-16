@@ -12,9 +12,11 @@ from webhook.config import settings
 from webhook.dashboard import DASHBOARD_HTML
 from webhook.database import (
     close_db,
+    get_event_by_id,
     get_recent_events,
     get_session_updates,
     get_sessions,
+    get_stats,
     init_db,
     log_session_created,
     log_session_update,
@@ -289,37 +291,52 @@ async def github_webhook(
 # ---------------------------------------------------------------------------
 
 
+def _serialise_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert datetime values to ISO-8601 strings for JSON serialisation."""
+    for row in rows:
+        for key, val in row.items():
+            if hasattr(val, "isoformat"):
+                row[key] = val.isoformat()
+    return rows
+
+
+@app.get("/api/stats")
+async def api_stats() -> dict[str, Any]:
+    """Return aggregate statistics for the dashboard overview."""
+    return await get_stats()
+
+
 @app.get("/api/events")
 async def api_events() -> list[dict[str, Any]]:
-    """Return recent webhook events as JSON."""
+    """Return recent webhook events as JSON (payload excluded for list view)."""
     events = await get_recent_events()
     for e in events:
-        for key, val in e.items():
-            if hasattr(val, "isoformat"):
-                e[key] = val.isoformat()
-    return events
+        e.pop("payload", None)
+    return _serialise_rows(events)
+
+
+@app.get("/api/events/{event_id}")
+async def api_event_detail(event_id: int) -> dict[str, Any]:
+    """Return a single webhook event with its full payload."""
+    event = await get_event_by_id(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    for key, val in event.items():
+        if hasattr(val, "isoformat"):
+            event[key] = val.isoformat()
+    return event
 
 
 @app.get("/api/sessions")
 async def api_sessions() -> list[dict[str, Any]]:
     """Return Devin sessions as JSON."""
-    sessions = await get_sessions()
-    for s in sessions:
-        for key, val in s.items():
-            if hasattr(val, "isoformat"):
-                s[key] = val.isoformat()
-    return sessions
+    return _serialise_rows(await get_sessions())
 
 
 @app.get("/api/sessions/{session_id}/updates")
 async def api_session_updates(session_id: str) -> list[dict[str, Any]]:
     """Return status updates for a specific session."""
-    updates = await get_session_updates(session_id)
-    for u in updates:
-        for key, val in u.items():
-            if hasattr(val, "isoformat"):
-                u[key] = val.isoformat()
-    return updates
+    return _serialise_rows(await get_session_updates(session_id))
 
 
 @app.get("/", response_class=HTMLResponse)

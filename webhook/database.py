@@ -209,3 +209,79 @@ async def get_session_updates(session_id: str) -> list[dict[str, Any]]:
     except Exception:
         logger.exception("Failed to fetch session updates")
         return []
+
+
+async def get_event_by_id(event_id: int) -> dict[str, Any] | None:
+    """Fetch a single webhook event by ID (including payload)."""
+    if not _pool:
+        return None
+    try:
+        row = await _pool.fetchrow(
+            "SELECT * FROM webhook_events WHERE id = $1",
+            event_id,
+        )
+        return dict(row) if row else None
+    except Exception:
+        logger.exception("Failed to fetch event %s", event_id)
+        return None
+
+
+async def get_stats() -> dict[str, Any]:
+    """Return aggregate statistics for the dashboard overview."""
+    if not _pool:
+        return {
+            "total_events": 0,
+            "processed_events": 0,
+            "ignored_events": 0,
+            "total_sessions": 0,
+            "active_sessions": 0,
+            "completed_sessions": 0,
+            "errored_sessions": 0,
+            "repos": [],
+        }
+    try:
+        async with _pool.acquire() as conn:
+            ev_total = await conn.fetchval("SELECT COUNT(*) FROM webhook_events")
+            ev_processed = await conn.fetchval(
+                "SELECT COUNT(*) FROM webhook_events WHERE status = 'session_created'"
+            )
+            ev_ignored = await conn.fetchval(
+                "SELECT COUNT(*) FROM webhook_events WHERE status = 'ignored'"
+            )
+            s_total = await conn.fetchval("SELECT COUNT(*) FROM devin_sessions")
+            s_active = await conn.fetchval(
+                "SELECT COUNT(*) FROM devin_sessions "
+                "WHERE status NOT IN ('finished', 'error', 'stopped', 'timed_out')"
+            )
+            s_completed = await conn.fetchval(
+                "SELECT COUNT(*) FROM devin_sessions WHERE status = 'finished'"
+            )
+            s_errored = await conn.fetchval(
+                "SELECT COUNT(*) FROM devin_sessions "
+                "WHERE status IN ('error', 'stopped', 'timed_out')"
+            )
+            repo_rows = await conn.fetch(
+                "SELECT DISTINCT repo FROM devin_sessions WHERE repo != '' ORDER BY repo"
+            )
+            return {
+                "total_events": ev_total or 0,
+                "processed_events": ev_processed or 0,
+                "ignored_events": ev_ignored or 0,
+                "total_sessions": s_total or 0,
+                "active_sessions": s_active or 0,
+                "completed_sessions": s_completed or 0,
+                "errored_sessions": s_errored or 0,
+                "repos": [r["repo"] for r in repo_rows],
+            }
+    except Exception:
+        logger.exception("Failed to fetch stats")
+        return {
+            "total_events": 0,
+            "processed_events": 0,
+            "ignored_events": 0,
+            "total_sessions": 0,
+            "active_sessions": 0,
+            "completed_sessions": 0,
+            "errored_sessions": 0,
+            "repos": [],
+        }

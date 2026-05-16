@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # Database (optional — when empty the app runs without persistence)
     database_url: str = ""
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
 
 settings = Settings()  # type: ignore[call-arg]
