@@ -6,8 +6,20 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse
 
 from webhook.config import settings
+from webhook.dashboard import DASHBOARD_HTML
+from webhook.database import (
+    close_db,
+    get_recent_events,
+    get_session_updates,
+    get_sessions,
+    init_db,
+    log_session_created,
+    log_session_update,
+    log_webhook_event,
+)
 from webhook.devin_client import create_session, get_session
 from webhook.github_client import post_issue_comment
 
@@ -23,6 +35,8 @@ _active_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    if settings.database_url:
+        await init_db(settings.database_url)
     yield
     # Cancel all background polling tasks on shutdown
     for task in _active_tasks:
@@ -30,6 +44,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     if _active_tasks:
         await asyncio.gather(*_active_tasks, return_exceptions=True)
     _active_tasks.clear()
+    await close_db()
 
 
 app = FastAPI(
@@ -95,26 +110,35 @@ async def _poll_and_update(
             status = session.get("status", "unknown")
             logger.info("Session %s status: %s", session_id, status)
 
-            if status in terminal_statuses:
-                status_label = "completed" if status == "finished" else status
-                pull_requests = (
-                    session.get("pull_requests")
-                    or session.get("structured_output", {}).get("pull_requests")
-                    or []
-                )
-                pr_text = ""
-                if pull_requests:
-                    pr_links = [f"- {pr.get('url', pr)}" for pr in pull_requests]
-                    pr_text = "\n\n**Pull Requests:**\n" + "\n".join(pr_links)
+            if status not in terminal_statuses:
+                await log_session_update(session_id, status)
+                continue
 
-                body = (
-                    f"🤖 **Devin session {status_label}**\n\n"
-                    f"Session: {session_url}\n"
-                    f"Status: `{status}`"
-                    f"{pr_text}"
-                )
-                await post_issue_comment(owner, repo, issue_number, body)
-                return
+            status_label = "completed" if status == "finished" else status
+            pull_requests = (
+                session.get("pull_requests")
+                or session.get("structured_output", {}).get("pull_requests")
+                or []
+            )
+            pr_text = ""
+            if pull_requests:
+                pr_links = [f"- {pr.get('url', pr)}" for pr in pull_requests]
+                pr_text = "\n\n**Pull Requests:**\n" + "\n".join(pr_links)
+
+            body = (
+                f"🤖 **Devin session {status_label}**\n\n"
+                f"Session: {session_url}\n"
+                f"Status: `{status}`"
+                f"{pr_text}"
+            )
+            await post_issue_comment(owner, repo, issue_number, body)
+
+            await log_session_update(
+                session_id,
+                status,
+                {"pull_requests": pull_requests} if pull_requests else None,
+            )
+            return
 
         # Timeout
         await post_issue_comment(
@@ -125,6 +149,7 @@ async def _poll_and_update(
             f"Session: {session_url}\n"
             f"Check the session for the latest status.",
         )
+        await log_session_update(session_id, "timed_out")
     except asyncio.CancelledError:
         logger.info("Polling task for session %s cancelled", session_id)
     except Exception:
@@ -148,16 +173,41 @@ async def github_webhook(
     _verify_signature(payload, x_hub_signature_256)
 
     if x_github_event != "issues":
+        await log_webhook_event(
+            event_type=x_github_event or "unknown",
+            action="",
+            repo="",
+            issue_number=None,
+            label="",
+            status="ignored",
+        )
         return {"status": "ignored", "reason": f"event type '{x_github_event}' not handled"}
 
     data = await request.json()
     action = data.get("action")
 
     if action != "labeled":
+        await log_webhook_event(
+            event_type="issues",
+            action=action or "",
+            repo=data.get("repository", {}).get("full_name", ""),
+            issue_number=data.get("issue", {}).get("number"),
+            label="",
+            status="ignored",
+        )
         return {"status": "ignored", "reason": f"action '{action}' not handled"}
 
     label = data.get("label", {})
     if label.get("name") != "devin-fix":
+        repo_full = data.get("repository", {}).get("full_name", "")
+        await log_webhook_event(
+            event_type="issues",
+            action="labeled",
+            repo=repo_full,
+            issue_number=data.get("issue", {}).get("number"),
+            label=label.get("name", ""),
+            status="ignored",
+        )
         return {
             "status": "ignored",
             "reason": f"label '{label.get('name')}' is not 'devin-fix'",
@@ -176,6 +226,16 @@ async def github_webhook(
         issue.get("title"),
     )
 
+    await log_webhook_event(
+        event_type="issues",
+        action="labeled",
+        repo=repo_full_name,
+        issue_number=issue_number,
+        label="devin-fix",
+        status="session_created",
+        payload=data,
+    )
+
     # Create Devin session
     prompt = _build_prompt(issue, repo_full_name)
     try:
@@ -186,6 +246,14 @@ async def github_webhook(
 
     session_id = session_resp.get("session_id", "")
     session_url = session_resp.get("url", f"https://app.devin.ai/sessions/{session_id}")
+
+    await log_session_created(
+        session_id=session_id,
+        session_url=session_url,
+        repo=repo_full_name,
+        issue_number=issue_number,
+        issue_title=issue.get("title", ""),
+    )
 
     # Post initial comment on the issue
     comment_body = (
@@ -211,3 +279,47 @@ async def github_webhook(
         "session_url": session_url,
         "issue": f"{repo_full_name}#{issue_number}",
     }
+
+
+# ---------------------------------------------------------------------------
+# Dashboard API endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/events")
+async def api_events() -> list[dict[str, Any]]:
+    """Return recent webhook events as JSON."""
+    events = await get_recent_events()
+    for e in events:
+        for key, val in e.items():
+            if hasattr(val, "isoformat"):
+                e[key] = val.isoformat()
+    return events
+
+
+@app.get("/api/sessions")
+async def api_sessions() -> list[dict[str, Any]]:
+    """Return Devin sessions as JSON."""
+    sessions = await get_sessions()
+    for s in sessions:
+        for key, val in s.items():
+            if hasattr(val, "isoformat"):
+                s[key] = val.isoformat()
+    return sessions
+
+
+@app.get("/api/sessions/{session_id}/updates")
+async def api_session_updates(session_id: str) -> list[dict[str, Any]]:
+    """Return status updates for a specific session."""
+    updates = await get_session_updates(session_id)
+    for u in updates:
+        for key, val in u.items():
+            if hasattr(val, "isoformat"):
+                u[key] = val.isoformat()
+    return updates
+
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard() -> str:
+    """Serve the dashboard UI."""
+    return DASHBOARD_HTML

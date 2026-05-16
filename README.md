@@ -89,17 +89,36 @@ openssl rand -hex 32
 
 > **Note:** If `GITHUB_WEBHOOK_SECRET` is left empty, the server will skip signature verification and accept all incoming requests. This is fine for local development, but you should always set a secret in production.
 
-### 3. Local Development with Smee.io
+### 3. Run with Docker Compose (recommended)
+
+```bash
+docker compose up --build
+```
+
+This starts the webhook server on port **8000** with a Postgres database for logging.
+Open **http://localhost:8000** to view the dashboard.
+
+#### Run without Docker
+
+If you prefer to run the server directly:
+
+```bash
+uvicorn webhook.server:app --host 0.0.0.0 --port 8000
+```
+
+> **Note:** Without `DATABASE_URL` set, the server runs without persistence (no dashboard data).
+
+### 4. Local Development with Smee.io
 
 GitHub webhooks require a publicly accessible URL. During local development, use [**smee.io**](https://smee.io) — a free webhook proxy that forwards payloads from GitHub to your local machine.
 
-#### 3a. Create a Smee Channel
+#### 4a. Create a Smee Channel
 
 1. Go to [**https://smee.io/new**](https://smee.io/new)
 2. You'll be redirected to a unique URL like `https://smee.io/AbCdEfGhIjKl`
 3. Copy this URL — you'll use it as the **Payload URL** when configuring your GitHub webhook (Step 5), and as the `--url` argument for the smee client below
 
-#### 3b. Install the Smee Client
+#### 4b. Install the Smee Client
 
 ```bash
 npm install -g smee-client
@@ -107,7 +126,7 @@ npm install -g smee-client
 
 > **Note:** If you don't have Node.js/npm installed, you can also use the [**smee-client Python package**](https://pypi.org/project/pysmee/): `pip install pysmee`
 
-#### 3c. Start the Smee Client
+#### 4c. Start the Smee Client
 
 In a **separate terminal**, run:
 
@@ -115,21 +134,11 @@ In a **separate terminal**, run:
 smee --url https://smee.io/<your-channel-id> --target http://localhost:8000/webhook/github
 ```
 
-Replace `https://smee.io/<your-channel-id>` with your actual Smee channel URL from Step 3a.
+Replace `https://smee.io/<your-channel-id>` with your actual Smee channel URL from Step 4a.
 
 This will listen for webhook deliveries on your Smee channel and forward them to your local server at `http://localhost:8000/webhook/github`.
 
 > **Tip:** Keep this terminal open while developing. The smee client must be running to receive webhooks locally.
-
-### 4. Run the Server
-
-```bash
-uvicorn webhook.server:app --host 0.0.0.0 --port 8000
-```
-
-You should now have two terminals running:
-1. The **smee client** (forwarding webhooks from GitHub → localhost)
-2. The **uvicorn server** (processing the webhooks)
 
 ### 5. Configure Webhooks on Your Repositories
 
@@ -170,8 +179,12 @@ gh label create devin-fix --description "Trigger Devin to fix this issue" --colo
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/` | Dashboard UI — view webhook events and Devin sessions |
 | `GET` | `/health` | Health check, returns active session count |
 | `POST` | `/webhook/github` | GitHub webhook receiver |
+| `GET` | `/api/events` | Recent webhook events (JSON) |
+| `GET` | `/api/sessions` | Devin sessions (JSON) |
+| `GET` | `/api/sessions/{id}/updates` | Status updates for a session (JSON) |
 
 ## Development
 
@@ -201,11 +214,17 @@ ruff format .
 
 ## Deployment
 
-The server can be deployed to any platform that supports Python ASGI apps. Example with Fly.io:
+The server can be deployed to any platform that supports Docker. The included `Dockerfile` and `docker-compose.yml` handle everything:
 
 ```bash
-# The deploy tool handles Dockerfile and fly.toml generation
+# Production deploy with Docker Compose
+docker compose up -d --build
+```
+
+For platforms like Fly.io:
+
+```bash
 fly deploy
 ```
 
-Make sure to set the environment variables as secrets on your deployment platform.
+Make sure to set the environment variables as secrets on your deployment platform and provide a Postgres database via `DATABASE_URL`.

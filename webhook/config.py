@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     poll_interval_seconds: int = 30
     poll_timeout_seconds: int = 3600  # 1 hour max
 
+    # Database (optional — when empty the app runs without persistence)
+    database_url: str = ""
+
     model_config = {"env_file": ".env"}
 
 
