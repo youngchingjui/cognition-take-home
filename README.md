@@ -89,11 +89,24 @@ openssl rand -hex 32
 
 > **Note:** If `GITHUB_WEBHOOK_SECRET` is left empty, the server will skip signature verification and accept all incoming requests. This is fine for local development, but you should always set a secret in production.
 
-### 3. Run the Server
+### 3. Run with Docker Compose (recommended)
+
+```bash
+docker compose up --build
+```
+
+This starts the webhook server on port **8000** with a Postgres database for logging.
+Open **http://localhost:8000** to view the dashboard.
+
+#### Run without Docker
+
+If you prefer to run the server directly:
 
 ```bash
 uvicorn webhook.server:app --host 0.0.0.0 --port 8000
 ```
+
+> **Note:** Without `DATABASE_URL` set, the server runs without persistence (no dashboard data).
 
 ### 4. Configure Webhooks on Your Repositories
 
@@ -132,8 +145,12 @@ gh label create devin-fix --description "Trigger Devin to fix this issue" --colo
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/` | Dashboard UI — view webhook events and Devin sessions |
 | `GET` | `/health` | Health check, returns active session count |
 | `POST` | `/webhook/github` | GitHub webhook receiver |
+| `GET` | `/api/events` | Recent webhook events (JSON) |
+| `GET` | `/api/sessions` | Devin sessions (JSON) |
+| `GET` | `/api/sessions/{id}/updates` | Status updates for a session (JSON) |
 
 ## Development
 
@@ -153,11 +170,17 @@ ruff format .
 
 ## Deployment
 
-The server can be deployed to any platform that supports Python ASGI apps. Example with Fly.io:
+The server can be deployed to any platform that supports Docker. The included `Dockerfile` and `docker-compose.yml` handle everything:
 
 ```bash
-# The deploy tool handles Dockerfile and fly.toml generation
+# Production deploy with Docker Compose
+docker compose up -d --build
+```
+
+For platforms like Fly.io:
+
+```bash
 fly deploy
 ```
 
-Make sure to set the environment variables as secrets on your deployment platform.
+Make sure to set the environment variables as secrets on your deployment platform and provide a Postgres database via `DATABASE_URL`.
