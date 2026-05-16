@@ -34,12 +34,60 @@ Copy the example and fill in your credentials:
 cp .env.example .env
 ```
 
-| Variable | Description |
-|----------|-------------|
-| `DEVIN_API_KEY` | Devin service user API key (starts with `cog_`) |
-| `DEVIN_ORG_ID` | Your Devin organization ID |
-| `GITHUB_TOKEN` | GitHub personal access token (needs `repo` scope for posting comments) |
-| `GITHUB_WEBHOOK_SECRET` | Shared secret for webhook signature verification |
+Below is a breakdown of each variable and how to obtain it.
+
+#### `DEVIN_API_KEY`
+
+Your Devin API key, used to create and poll Devin sessions. It starts with `cog_`.
+
+1. Go to [**Devin → Settings → API Keys**](https://app.devin.ai/settings/api-keys)
+2. Click **Create API Key**
+3. Give it a descriptive name (e.g. `issue-remediation-webhook`)
+4. Copy the key and paste it into your `.env` file
+
+#### `DEVIN_ORG_ID`
+
+Your Devin organization ID, used to scope API requests to your organization.
+
+1. Go to [**Devin → Settings → General**](https://app.devin.ai/settings)
+2. Your organization ID is displayed on this page
+3. Copy the ID and paste it into your `.env` file
+
+#### `GITHUB_TOKEN`
+
+A GitHub **Personal Access Token (classic)** used to post comments on issues. It needs the `repo` scope.
+
+1. Go to [**GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)**](https://github.com/settings/tokens)
+2. Click **Generate new token** → **Generate new token (classic)**
+3. Give it a descriptive note (e.g. `devin-webhook`)
+4. Set an expiration (or choose **No expiration** for long-running deployments)
+5. Under **Select scopes**, check **`repo`** (this grants access to post comments on issues)
+6. Click **Generate token**
+7. Copy the token immediately (you won't be able to see it again) and paste it into your `.env` file
+
+> **Tip:** If you prefer fine-grained tokens, go to [**Fine-grained tokens**](https://github.com/settings/personal-access-tokens/new) instead. Grant **Read and Write** access to **Issues** for the specific repositories you want to monitor.
+
+#### `GITHUB_WEBHOOK_SECRET`
+
+A shared secret used to verify that incoming webhook requests are genuinely from GitHub (via HMAC-SHA256 signature verification). This is optional but **strongly recommended** for production use.
+
+**Generate a secret:**
+
+```bash
+# Generate a random 32-character hex string
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Or use `openssl`:
+
+```bash
+openssl rand -hex 32
+```
+
+1. Copy the generated value and paste it into your `.env` file as `GITHUB_WEBHOOK_SECRET`
+2. Use the **same value** when configuring the webhook in each GitHub repository (see [Step 4](#4-configure-webhooks-on-your-repositories) below)
+
+> **Note:** If `GITHUB_WEBHOOK_SECRET` is left empty, the server will skip signature verification and accept all incoming requests. This is fine for local development, but you should always set a secret in production.
 
 ### 3. Run the Server
 
@@ -51,12 +99,16 @@ uvicorn webhook.server:app --host 0.0.0.0 --port 8000
 
 For each repository you want to monitor:
 
-1. Go to **Settings → Webhooks → Add webhook** in the GitHub repo
-2. Set the **Payload URL** to: `https://<your-server>/webhook/github`
-3. Set **Content type** to: `application/json`
-4. Set the **Secret** to the same value as your `GITHUB_WEBHOOK_SECRET`
-5. Under **Which events would you like to trigger this webhook?**, select **Let me select individual events** and check **Issues**
-6. Click **Add webhook**
+1. Go to your repository's webhook settings: `https://github.com/<owner>/<repo>/settings/hooks`
+   (or navigate to **Settings → Webhooks** in the GitHub repo)
+2. Click **Add webhook**
+3. Set the **Payload URL** to: `https://<your-server>/webhook/github`
+4. Set **Content type** to: `application/json`
+5. Set the **Secret** to the same value you saved as `GITHUB_WEBHOOK_SECRET` in your `.env` file
+6. Under **Which events would you like to trigger this webhook?**, select **Let me select individual events** and check **Issues**
+7. Click **Add webhook**
+
+> **Important:** The **Secret** field in GitHub must exactly match the `GITHUB_WEBHOOK_SECRET` value in your `.env` file. This is how the server verifies that webhook payloads are genuinely from GitHub.
 
 ### 5. Create the `devin-fix` Label
 
