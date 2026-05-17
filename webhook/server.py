@@ -116,42 +116,75 @@ async def _poll_and_update(
                 await log_session_update(session_id, status)
                 continue
 
-            status_label = "completed" if status == "finished" else status
             pull_requests = (
                 session.get("pull_requests")
                 or session.get("structured_output", {}).get("pull_requests")
                 or []
             )
-            pr_text = ""
+
+            # Determine outcome based on whether a PR was created
             if pull_requests:
+                outcome = "pr_created"
                 pr_links = [f"- {pr.get('url', pr)}" for pr in pull_requests]
                 pr_text = "\n\n**Pull Requests:**\n" + "\n".join(pr_links)
+                body = (
+                    f"🤖 **Devin created a pull request**\n\n"
+                    f"Session: {session_url}\n"
+                    f"Status: `{status}`"
+                    f"{pr_text}"
+                )
+            else:
+                outcome = "error"
+                body = (
+                    f"🤖 **Devin session ended without creating a PR**\n\n"
+                    f"Session: {session_url}\n"
+                    f"Status: `{status}`"
+                )
 
-            body = (
-                f"🤖 **Devin session {status_label}**\n\n"
-                f"Session: {session_url}\n"
-                f"Status: `{status}`"
-                f"{pr_text}"
-            )
             await post_issue_comment(owner, repo, issue_number, body)
 
             await log_session_update(
                 session_id,
-                status,
+                outcome,
                 {"pull_requests": pull_requests} if pull_requests else None,
             )
             return
 
-        # Timeout
-        await post_issue_comment(
-            owner,
-            repo,
-            issue_number,
-            f"⏱️ **Devin session timed out** (polling limit reached)\n\n"
-            f"Session: {session_url}\n"
-            f"Check the session for the latest status.",
-        )
-        await log_session_update(session_id, "timed_out")
+        # Polling timeout — do one final check for PRs
+        try:
+            session = await get_session(session_id)
+            pull_requests = (
+                session.get("pull_requests")
+                or session.get("structured_output", {}).get("pull_requests")
+                or []
+            )
+        except Exception:
+            pull_requests = []
+
+        if pull_requests:
+            pr_links = [f"- {pr.get('url', pr)}" for pr in pull_requests]
+            pr_text = "\n\n**Pull Requests:**\n" + "\n".join(pr_links)
+            await post_issue_comment(
+                owner,
+                repo,
+                issue_number,
+                f"🤖 **Devin created a pull request**\n\n"
+                f"Session: {session_url}{pr_text}",
+            )
+            await log_session_update(
+                session_id, "pr_created", {"pull_requests": pull_requests}
+            )
+        else:
+            await post_issue_comment(
+                owner,
+                repo,
+                issue_number,
+                f"🤖 **Devin session ended without creating a PR** "
+                f"(polling limit reached)\n\n"
+                f"Session: {session_url}\n"
+                f"Check the session for the latest status.",
+            )
+            await log_session_update(session_id, "error")
     except asyncio.CancelledError:
         logger.info("Polling task for session %s cancelled", session_id)
     except Exception:

@@ -235,7 +235,7 @@ async def get_stats() -> dict[str, Any]:
             "ignored_events": 0,
             "total_sessions": 0,
             "active_sessions": 0,
-            "completed_sessions": 0,
+            "pr_created_sessions": 0,
             "errored_sessions": 0,
             "repos": [],
         }
@@ -251,14 +251,13 @@ async def get_stats() -> dict[str, Any]:
             s_total = await conn.fetchval("SELECT COUNT(*) FROM devin_sessions")
             s_active = await conn.fetchval(
                 "SELECT COUNT(*) FROM devin_sessions "
-                "WHERE status NOT IN ('finished', 'error', 'stopped', 'timed_out')"
+                "WHERE status NOT IN ('pr_created', 'error')"
             )
-            s_completed = await conn.fetchval(
-                "SELECT COUNT(*) FROM devin_sessions WHERE status = 'finished'"
+            s_pr_created = await conn.fetchval(
+                "SELECT COUNT(*) FROM devin_sessions WHERE status = 'pr_created'"
             )
             s_errored = await conn.fetchval(
-                "SELECT COUNT(*) FROM devin_sessions "
-                "WHERE status IN ('error', 'stopped', 'timed_out')"
+                "SELECT COUNT(*) FROM devin_sessions WHERE status = 'error'"
             )
             repo_rows = await conn.fetch(
                 "SELECT DISTINCT repo FROM devin_sessions WHERE repo != '' ORDER BY repo"
@@ -269,7 +268,7 @@ async def get_stats() -> dict[str, Any]:
                 "ignored_events": ev_ignored or 0,
                 "total_sessions": s_total or 0,
                 "active_sessions": s_active or 0,
-                "completed_sessions": s_completed or 0,
+                "pr_created_sessions": s_pr_created or 0,
                 "errored_sessions": s_errored or 0,
                 "repos": [r["repo"] for r in repo_rows],
             }
@@ -281,7 +280,7 @@ async def get_stats() -> dict[str, Any]:
             "ignored_events": 0,
             "total_sessions": 0,
             "active_sessions": 0,
-            "completed_sessions": 0,
+            "pr_created_sessions": 0,
             "errored_sessions": 0,
             "repos": [],
         }

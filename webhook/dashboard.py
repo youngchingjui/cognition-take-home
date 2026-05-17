@@ -327,8 +327,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="value accent" id="st-active">-</div>
       </div>
       <div class="stat-card">
-        <div class="label">Completed</div>
-        <div class="value green" id="st-completed">-</div>
+        <div class="label">PR Created</div>
+        <div class="value green" id="st-pr-created">-</div>
       </div>
       <div class="stat-card">
         <div class="label">Errors</div>
@@ -366,7 +366,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="pipeline-arrow">&#x2192;</div>
         <div class="pipeline-step">
           <div class="pipeline-icon green">&#x2714;</div>
-          <div class="step-label">Completed</div>
+          <div class="step-label">PR Created</div>
           <div class="step-count" id="pipe-done">-</div>
         </div>
       </div>
@@ -425,7 +425,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="filters" id="session-filters">
       <button class="filter-btn active" data-filter="all">All</button>
       <button class="filter-btn" data-filter="active">Active</button>
-      <button class="filter-btn" data-filter="finished">Completed</button>
+      <button class="filter-btn" data-filter="pr_created">PR Created</button>
       <button class="filter-btn" data-filter="error">Errors</button>
     </div>
     <table>
@@ -518,26 +518,25 @@ function duration(start, end) {
 
 function statusBadge(s) {
   var map = {
-    finished: "badge-green", completed: "badge-green",
+    pr_created: "badge-green",
     session_created: "badge-blue",
     running: "badge-blue", created: "badge-blue",
-    error: "badge-red", stopped: "badge-red",
-    timed_out: "badge-yellow", ignored: "badge-muted"
+    error: "badge-red",
+    ignored: "badge-muted"
   };
+  var label = s === "pr_created" ? "PR created" : s;
   return '<span class="badge ' + (map[s] || "badge-muted") + '">'
-    + esc(s) + "</span>";
+    + esc(label) + "</span>";
 }
 
 function statusDotClass(s) {
-  if (s === "finished" || s === "completed"
-      || s === "session_created") return "green";
-  if (s === "error" || s === "stopped") return "red";
+  if (s === "pr_created" || s === "session_created") return "green";
+  if (s === "error") return "red";
   if (s === "running" || s === "created") return "blue";
-  if (s === "timed_out") return "yellow";
   return "muted";
 }
 
-var TERMINAL = new Set(["finished", "error", "stopped", "timed_out"]);
+var TERMINAL = new Set(["pr_created", "error"]);
 
 /* ---------- Filter state ---------- */
 var eventFilter = "all";
@@ -589,7 +588,7 @@ async function loadStats() {
     document.getElementById("st-processed").textContent = d.processed_events;
     document.getElementById("st-ignored").textContent = d.ignored_events;
     document.getElementById("st-active").textContent = d.active_sessions;
-    document.getElementById("st-completed").textContent = d.completed_sessions;
+    document.getElementById("st-pr-created").textContent = d.pr_created_sessions;
     document.getElementById("st-errors").textContent = d.errored_sessions;
     document.getElementById("pipe-received").textContent =
       d.total_events + " total";
@@ -598,7 +597,7 @@ async function loadStats() {
     document.getElementById("pipe-polling").textContent =
       d.active_sessions + " active";
     document.getElementById("pipe-done").textContent =
-      d.completed_sessions + " done";
+      d.pr_created_sessions + " done";
     var rl = document.getElementById("repo-list");
     if (d.repos && d.repos.length) {
       rl.innerHTML = d.repos.map(function(r) {
@@ -708,15 +707,13 @@ function renderSessions() {
     filtered = allSessions.filter(function(s) {
       return !TERMINAL.has(s.status);
     });
-  } else if (sessionFilter === "finished") {
+  } else if (sessionFilter === "pr_created") {
     filtered = allSessions.filter(function(s) {
-      return s.status === "finished";
+      return s.status === "pr_created";
     });
   } else if (sessionFilter === "error") {
     filtered = allSessions.filter(function(s) {
-      return s.status === "error"
-        || s.status === "stopped"
-        || s.status === "timed_out";
+      return s.status === "error";
     });
   }
   document.getElementById("sessions-count").textContent =
