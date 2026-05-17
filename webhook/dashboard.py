@@ -147,6 +147,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   a:hover { text-decoration: underline; }
   .empty { text-align: center; padding: 40px; color: var(--muted); }
 
+  /* Refresh button */
+  .refresh-btn {
+    padding: 4px 10px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--muted); font-size: 0.72rem; cursor: pointer;
+    transition: all 0.15s; display: inline-flex; align-items: center; gap: 4px;
+  }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--text); }
+  .refresh-btn.spinning svg { animation: spin 0.6s linear; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
   /* Activity feed */
   .activity-feed {
     background: var(--surface); border: 1px solid var(--border);
@@ -157,6 +168,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     padding: 12px 16px; border-bottom: 1px solid var(--border);
   }
   .activity-item:last-child { border-bottom: none; }
+  .activity-item.clickable { cursor: pointer; transition: background 0.15s; }
+  .activity-item.clickable:hover { background: rgba(88,166,255,0.06); }
   .activity-dot {
     width: 8px; height: 8px; border-radius: 50%; margin-top: 6px;
     flex-shrink: 0;
@@ -385,7 +398,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <!-- Recent activity -->
     <div class="section-header" style="margin-top:20px;">
       <h2>Recent Activity</h2>
-      <div class="meta">Auto-refreshes every 10s</div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div class="meta">Auto-refreshes every 5s</div>
+        <button class="refresh-btn" id="refresh-btn" onclick="manualRefresh()">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3a5 5 0 104.546 2.914.5.5 0 01.908-.418A6 6 0 118 2v1z"/><path d="M8 4.466V.534a.25.25 0 01.41-.192l2.36 1.966a.25.25 0 010 .384L8.41 4.658A.25.25 0 018 4.466z"/></svg>
+          Refresh
+        </button>
+      </div>
     </div>
     <div class="activity-feed" id="activity-feed">
       <div class="empty">Loading...</div>
@@ -825,6 +844,34 @@ async function showSessionDetail(sessionId) {
 }
 
 /* ---------- Activity feed ---------- */
+function navigateToPage(pageName) {
+  document.querySelectorAll(".nav-item").forEach(function(n) {
+    n.classList.remove("active");
+    if (n.dataset.page === pageName) n.classList.add("active");
+  });
+  document.querySelectorAll(".page").forEach(function(p) {
+    p.classList.remove("active");
+  });
+  document.getElementById(pageName).classList.add("active");
+}
+
+function onActivityClick(type, id) {
+  if (type === "event") {
+    navigateToPage("events");
+    showEventDetail(id);
+  } else if (type === "session") {
+    navigateToPage("sessions");
+    showSessionDetail(id);
+  }
+}
+
+function manualRefresh() {
+  var btn = document.getElementById("refresh-btn");
+  btn.classList.add("spinning");
+  refresh();
+  setTimeout(function() { btn.classList.remove("spinning"); }, 600);
+}
+
 function renderActivity() {
   var feed = document.getElementById("activity-feed");
   if (!allEvents.length && !allSessions.length) {
@@ -851,7 +898,9 @@ function renderActivity() {
     items.push({
       time: ev.received_at,
       dot: statusDotClass(ev.status),
-      html: desc
+      html: desc,
+      clickType: "event",
+      clickId: ev.id
     });
   });
   allSessions.forEach(function(s) {
@@ -861,7 +910,9 @@ function renderActivity() {
         dot: statusDotClass(s.status),
         html: 'Session ' + statusBadge(s.status)
           + ': <strong>' + esc(s.repo)
-          + '#' + s.issue_number + '</strong>'
+          + '#' + s.issue_number + '</strong>',
+        clickType: "session",
+        clickId: s.session_id
       });
     }
   });
@@ -874,7 +925,8 @@ function renderActivity() {
     return;
   }
   feed.innerHTML = items.map(function(it) {
-    return '<div class="activity-item">'
+    return '<div class="activity-item clickable" onclick="onActivityClick(\''
+      + it.clickType + '\', \'' + esc(String(it.clickId)) + '\')">'
       + '<div class="activity-dot ' + it.dot + '"></div>'
       + '<div class="activity-content">'
       + '<div class="title">' + it.html + '</div>'
@@ -891,7 +943,7 @@ function refresh() {
   loadSessions();
 }
 refresh();
-setInterval(refresh, 10000);
+setInterval(refresh, 5000);
 </script>
 </body>
 </html>
