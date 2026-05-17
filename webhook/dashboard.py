@@ -345,24 +345,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
     <div class="stats-grid" id="stats-grid">
       <div class="stat-card">
-        <div class="label">Total Webhooks</div>
-        <div class="value" id="st-total">-</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">Processed</div>
-        <div class="value green" id="st-processed">-</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">Ignored</div>
-        <div class="value" style="color:var(--muted)" id="st-ignored">-</div>
+        <div class="label">Completed Sessions</div>
+        <div class="value green" id="st-pr-created">-</div>
       </div>
       <div class="stat-card">
         <div class="label">Active Sessions</div>
         <div class="value accent" id="st-active">-</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">PR Created</div>
-        <div class="value green" id="st-pr-created">-</div>
       </div>
       <div class="stat-card">
         <div class="label">Errors</div>
@@ -644,18 +632,15 @@ async function loadStats() {
   try {
     var r = await fetch("/api/stats");
     var d = await r.json();
-    document.getElementById("st-total").textContent = d.total_events;
-    document.getElementById("st-processed").textContent = d.processed_events;
-    document.getElementById("st-ignored").textContent = d.ignored_events;
-    document.getElementById("st-active").textContent = d.active_sessions;
     document.getElementById("st-pr-created").textContent = d.pr_created_sessions;
+    document.getElementById("st-active").textContent = d.active_sessions;
     document.getElementById("st-errors").textContent = d.errored_sessions;
     document.getElementById("st-avg-ttpr").textContent =
       d.avg_time_to_pr_seconds != null
         ? duration(0, d.avg_time_to_pr_seconds * 1000)
         : "\u2014";
     document.getElementById("pipe-received").textContent =
-      d.total_events + " total";
+      d.processed_events + " total";
     document.getElementById("pipe-created").textContent =
       d.total_sessions + " sessions";
     document.getElementById("pipe-polling").textContent =
