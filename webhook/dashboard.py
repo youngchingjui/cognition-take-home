@@ -143,6 +143,27 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .badge-purple { background: rgba(188,140,255,0.15); color: var(--purple); }
   .badge-muted { background: rgba(139,148,158,0.15); color: var(--muted); }
 
+  /* CI status indicators */
+  .ci-indicator {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 0.7rem; font-weight: 600; white-space: nowrap;
+  }
+  .ci-indicator svg { width: 12px; height: 12px; flex-shrink: 0; }
+  .ci-passed { color: var(--green); }
+  .ci-failed { color: var(--red); }
+  .ci-pending { color: var(--yellow); }
+  .ci-none { color: var(--muted); }
+  .ci-section {
+    margin-top: 8px; padding: 10px 12px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .ci-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 0.8rem; margin-bottom: 6px;
+  }
+  .ci-row:last-child { margin-bottom: 0; }
+
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   .empty { text-align: center; padding: 40px; color: var(--muted); }
@@ -451,11 +472,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <thead>
         <tr>
           <th>Session</th><th>Repository</th><th>Issue</th>
-          <th>Status</th><th>Created</th><th>Duration</th>
+          <th>Status</th><th>CI</th><th>Created</th><th>Duration</th>
         </tr>
       </thead>
       <tbody id="sessions-body">
-        <tr><td colspan="6" class="empty">Loading...</td></tr>
+        <tr><td colspan="7" class="empty">Loading...</td></tr>
       </tbody>
     </table>
   </div>
@@ -556,6 +577,21 @@ function statusDotClass(s) {
 }
 
 var TERMINAL = new Set(["pr_created", "error"]);
+
+var CI_ICONS = {
+  all_passed: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>',
+  has_failures: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>',
+  pending: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1112 0A6 6 0 012 8zm6.5-2.5a.5.5 0 00-1 0V8a.5.5 0 00.25.43l2 1.2a.5.5 0 10.5-.86L8.5 7.69V5.5z"/></svg>'
+};
+
+function ciIndicatorHtml(ci) {
+  if (!ci || ci.status === "no_checks") return "";
+  var cls = ci.status === "all_passed" ? "ci-passed"
+    : ci.status === "has_failures" ? "ci-failed" : "ci-pending";
+  var icon = CI_ICONS[ci.status] || CI_ICONS.pending;
+  return '<span class="ci-indicator ' + cls + '">'
+    + icon + ' ' + ci.passed + '/' + ci.total + ' passed</span>';
+}
 
 /* ---------- Filter state ---------- */
 var eventFilter = "all";
@@ -740,7 +776,7 @@ function renderSessions() {
   var tbody = document.getElementById("sessions-body");
   if (!filtered.length) {
     tbody.innerHTML =
-      '<tr><td colspan="6" class="empty">'
+      '<tr><td colspan="7" class="empty">'
       + 'No sessions match the filter</td></tr>';
     return;
   }
@@ -757,12 +793,35 @@ function renderSessions() {
       + (s.issue_title ? " \u2014 " + esc(s.issue_title) : "")
       + "</td>"
       + "<td>" + statusBadge(s.status) + "</td>"
+      + '<td><span id="ci-cell-' + esc(s.session_id) + '">'
+      + (s.status === "pr_created" ? '...' : '\u2014') + '</span></td>'
       + "<td>" + fmtTime(s.created_at) + "</td>"
       + "<td>" + dur
       + (isTerminal ? ""
           : ' <span style="color:var(--accent)">&#x25CF;</span>')
       + "</td></tr>";
   }).join("");
+  // Fetch CI status for sessions with PRs
+  filtered.forEach(function(s) {
+    if (s.status === "pr_created") {
+      loadSessionCI(s.session_id);
+    }
+  });
+}
+
+async function loadSessionCI(sessionId) {
+  try {
+    var r = await fetch("/api/sessions/" + sessionId + "/ci");
+    var data = await r.json();
+    var cell = document.getElementById("ci-cell-" + sessionId);
+    if (!cell) return;
+    if (!data.length) { cell.textContent = "\u2014"; return; }
+    var html = data.map(function(d) {
+      if (d.ci) return ciIndicatorHtml(d.ci);
+      return '<span class="ci-indicator ci-none">\u2014</span>';
+    }).join(" ");
+    cell.innerHTML = html || "\u2014";
+  } catch(e) { /* ignore */ }
 }
 
 async function showSessionDetail(sessionId) {
@@ -803,6 +862,32 @@ async function showSessionDetail(sessionId) {
       + '<div class="val">' + dur + '</div></div>'
       + '</div>';
 
+    // Pull requests and CI section
+    var prUrls = [];
+    updates.forEach(function(u) {
+      if (!u.details) return;
+      var parsed = typeof u.details === "string"
+        ? JSON.parse(u.details) : u.details;
+      if (parsed && parsed.pull_requests) {
+        parsed.pull_requests.forEach(function(pr) {
+          var url = pr.url || pr;
+          if (url && prUrls.indexOf(url) === -1) prUrls.push(url);
+        });
+      }
+    });
+
+    if (prUrls.length) {
+      html += '<div class="detail-section"><h3>Pull Requests</h3>';
+      prUrls.forEach(function(url) {
+        html += '<div style="margin-bottom:8px;">'
+          + '<a href="' + esc(url) + '" target="_blank">' + esc(url) + '</a>'
+          + '</div>';
+      });
+      html += '<div id="detail-ci-status" style="margin-top:8px;">'
+        + '<span class="ci-indicator ci-none">Loading CI status...</span>'
+        + '</div></div>';
+    }
+
     html += '<div class="detail-section"><h3>Status Timeline</h3>';
     if (updates.length) {
       html += '<div class="timeline">';
@@ -834,6 +919,41 @@ async function showSessionDetail(sessionId) {
     }
     html += '</div>';
     openDetail(html);
+
+    // Async load CI status into detail panel
+    if (prUrls.length) {
+      try {
+        var ciResp = await fetch("/api/sessions/" + sessionId + "/ci");
+        var ciData = await ciResp.json();
+        var ciEl = document.getElementById("detail-ci-status");
+        if (ciEl && ciData.length) {
+          var ciHtml = '<h4 style="font-size:0.78rem;color:var(--muted);'
+            + 'margin-bottom:6px;">CI Checks</h4>';
+          ciData.forEach(function(d) {
+            ciHtml += '<div class="ci-row">';
+            if (d.ci && d.ci.status !== "no_checks") {
+              ciHtml += ciIndicatorHtml(d.ci);
+            } else if (d.error) {
+              ciHtml += '<span class="ci-indicator ci-none">'
+                + esc(d.error) + '</span>';
+            } else {
+              ciHtml += '<span class="ci-indicator ci-none">'
+                + 'No CI checks</span>';
+            }
+            ciHtml += '</div>';
+          });
+          ciEl.innerHTML = ciHtml;
+        } else if (ciEl) {
+          ciEl.innerHTML = '<span class="ci-indicator ci-none">'
+            + 'No CI checks found</span>';
+        }
+      } catch(e) {
+        var ciEl2 = document.getElementById("detail-ci-status");
+        if (ciEl2) ciEl2.innerHTML =
+          '<span class="ci-indicator ci-none">'
+          + 'Failed to load CI status</span>';
+      }
+    }
   } catch(e) {
     openDetail(
       '<div class="empty">Failed to load session details</div>');

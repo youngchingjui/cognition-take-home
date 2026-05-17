@@ -23,7 +23,7 @@ from webhook.database import (
     log_webhook_event,
 )
 from webhook.devin_client import DevinAPIError, create_session, get_session
-from webhook.github_client import post_issue_comment
+from webhook.github_client import get_pr_check_status, post_issue_comment
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,6 +99,7 @@ async def _poll_and_update(
     """Poll the Devin session until it completes, then update the GitHub issue."""
     elapsed = 0
     terminal_statuses = {"stopped", "error", "finished", "timed_out"}
+    pr_notified = False
     try:
         while elapsed < settings.poll_timeout_seconds:
             await asyncio.sleep(settings.poll_interval_seconds)
@@ -112,19 +113,15 @@ async def _poll_and_update(
             status = session.get("status", "unknown")
             logger.info("Session %s status: %s", session_id, status)
 
-            if status not in terminal_statuses:
-                await log_session_update(session_id, status)
-                continue
-
+            # Check for PRs on every poll — a PR can appear before terminal
             pull_requests = (
                 session.get("pull_requests")
                 or session.get("structured_output", {}).get("pull_requests")
                 or []
             )
 
-            # Determine outcome based on whether a PR was created
-            if pull_requests:
-                outcome = "pr_created"
+            if pull_requests and not pr_notified:
+                pr_notified = True
                 pr_links = [f"- {pr.get('url', pr)}" for pr in pull_requests]
                 pr_text = "\n\n**Pull Requests:**\n" + "\n".join(pr_links)
                 body = (
@@ -133,58 +130,66 @@ async def _poll_and_update(
                     f"Status: `{status}`"
                     f"{pr_text}"
                 )
-            else:
-                outcome = "error"
+                await post_issue_comment(owner, repo, issue_number, body)
+                await log_session_update(
+                    session_id,
+                    "pr_created",
+                    {"pull_requests": pull_requests},
+                )
+
+            if status not in terminal_statuses:
+                if not pr_notified:
+                    await log_session_update(session_id, status)
+                continue
+
+            # Terminal state reached
+            if not pr_notified:
+                # Session ended without a PR
                 body = (
                     f"🤖 **Devin session ended without creating a PR**\n\n"
                     f"Session: {session_url}\n"
                     f"Status: `{status}`"
                 )
-
-            await post_issue_comment(owner, repo, issue_number, body)
-
-            await log_session_update(
-                session_id,
-                outcome,
-                {"pull_requests": pull_requests} if pull_requests else None,
-            )
+                await post_issue_comment(owner, repo, issue_number, body)
+                await log_session_update(session_id, "error")
             return
 
-        # Polling timeout — do one final check for PRs
-        try:
-            session = await get_session(session_id)
-            pull_requests = (
-                session.get("pull_requests")
-                or session.get("structured_output", {}).get("pull_requests")
-                or []
-            )
-        except Exception:
-            pull_requests = []
+        # Polling timeout — if we never saw a PR, do one final check
+        if not pr_notified:
+            try:
+                session = await get_session(session_id)
+                pull_requests = (
+                    session.get("pull_requests")
+                    or session.get("structured_output", {}).get("pull_requests")
+                    or []
+                )
+            except Exception:
+                pull_requests = []
 
-        if pull_requests:
-            pr_links = [f"- {pr.get('url', pr)}" for pr in pull_requests]
-            pr_text = "\n\n**Pull Requests:**\n" + "\n".join(pr_links)
-            await post_issue_comment(
-                owner,
-                repo,
-                issue_number,
-                f"🤖 **Devin created a pull request**\n\n"
-                f"Session: {session_url}{pr_text}",
-            )
-            await log_session_update(
-                session_id, "pr_created", {"pull_requests": pull_requests}
-            )
-        else:
-            await post_issue_comment(
-                owner,
-                repo,
-                issue_number,
-                f"🤖 **Devin session ended without creating a PR** "
-                f"(polling limit reached)\n\n"
-                f"Session: {session_url}\n"
-                f"Check the session for the latest status.",
-            )
-            await log_session_update(session_id, "error")
+            if pull_requests:
+                pr_links = [f"- {pr.get('url', pr)}" for pr in pull_requests]
+                pr_text = "\n\n**Pull Requests:**\n" + "\n".join(pr_links)
+                await post_issue_comment(
+                    owner,
+                    repo,
+                    issue_number,
+                    f"🤖 **Devin created a pull request**\n\n"
+                    f"Session: {session_url}{pr_text}",
+                )
+                await log_session_update(
+                    session_id, "pr_created", {"pull_requests": pull_requests}
+                )
+            else:
+                await post_issue_comment(
+                    owner,
+                    repo,
+                    issue_number,
+                    f"🤖 **Devin session ended without creating a PR** "
+                    f"(polling limit reached)\n\n"
+                    f"Session: {session_url}\n"
+                    f"Check the session for the latest status.",
+                )
+                await log_session_update(session_id, "error")
     except asyncio.CancelledError:
         logger.info("Polling task for session %s cancelled", session_id)
     except Exception:
@@ -370,6 +375,51 @@ async def api_sessions() -> list[dict[str, Any]]:
 async def api_session_updates(session_id: str) -> list[dict[str, Any]]:
     """Return status updates for a specific session."""
     return _serialise_rows(await get_session_updates(session_id))
+
+
+@app.get("/api/sessions/{session_id}/ci")
+async def api_session_ci(session_id: str) -> list[dict[str, Any]]:
+    """Return CI check status for PRs associated with a session.
+
+    Looks up the most recent session update that contains pull_requests
+    in its details, extracts PR URLs, and fetches live CI status from GitHub.
+    """
+    updates = await get_session_updates(session_id)
+    # Find PR URLs from session update details
+    pr_urls: list[str] = []
+    for update in updates:
+        details = update.get("details")
+        if not details:
+            continue
+        parsed = details if isinstance(details, dict) else {}
+        prs = parsed.get("pull_requests", [])
+        for pr in prs:
+            url = pr.get("url", pr) if isinstance(pr, dict) else str(pr)
+            if url and url not in pr_urls:
+                pr_urls.append(url)
+
+    results: list[dict[str, Any]] = []
+    for url in pr_urls:
+        # Extract owner/repo/number from GitHub PR URL
+        # e.g. https://github.com/owner/repo/pull/123
+        parts = url.rstrip("/").split("/")
+        try:
+            idx = parts.index("pull")
+            pr_number = int(parts[idx + 1])
+            repo_name = parts[idx - 1]
+            owner_name = parts[idx - 2]
+        except (ValueError, IndexError):
+            results.append({"url": url, "ci": None, "error": "Could not parse PR URL"})
+            continue
+
+        try:
+            ci = await get_pr_check_status(owner_name, repo_name, pr_number)
+            results.append({"url": url, "ci": ci})
+        except Exception:
+            logger.exception("Failed to fetch CI status for %s", url)
+            results.append({"url": url, "ci": None, "error": "Failed to fetch CI status"})
+
+    return results
 
 
 @app.get("/", response_class=HTMLResponse)
