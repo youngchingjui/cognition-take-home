@@ -250,7 +250,7 @@ SEED_STATS: dict[str, Any] = {
     "pr_created_sessions": 47,
     "errored_sessions": 0,
     "avg_time_to_pr_seconds": 258,
-    "repos": ["youngchingjui/issue-to-pr"],
+    "repos": ["youngchingjui/superset"],
 }
 
 
