@@ -48,16 +48,7 @@ CREATE TABLE IF NOT EXISTS session_updates (
 """
 
 MIGRATION_SQL = """
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'devin_sessions' AND column_name = 'pr_created_at'
-    ) THEN
-        ALTER TABLE devin_sessions ADD COLUMN pr_created_at TIMESTAMPTZ;
-    END IF;
-END
-$$;
+ALTER TABLE devin_sessions ADD COLUMN IF NOT EXISTS pr_created_at TIMESTAMPTZ;
 """
 
 
