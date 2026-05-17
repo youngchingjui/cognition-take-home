@@ -47,6 +47,19 @@ CREATE TABLE IF NOT EXISTS session_updates (
 );
 """
 
+MIGRATION_SQL = """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'devin_sessions' AND column_name = 'pr_created_at'
+    ) THEN
+        ALTER TABLE devin_sessions ADD COLUMN pr_created_at TIMESTAMPTZ;
+    END IF;
+END
+$$;
+"""
+
 
 async def init_db(database_url: str) -> None:
     """Initialize the connection pool and create tables if needed."""
@@ -57,6 +70,7 @@ async def init_db(database_url: str) -> None:
         _pool = await asyncpg.create_pool(database_url, min_size=1, max_size=5)
         async with _pool.acquire() as conn:
             await conn.execute(SCHEMA_SQL)
+            await conn.execute(MIGRATION_SQL)
         logger.info("Database initialized successfully")
     except Exception:
         logger.exception("Failed to initialize database — running without persistence")
