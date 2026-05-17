@@ -347,6 +347,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="label">Errors</div>
         <div class="value red" id="st-errors">-</div>
       </div>
+      <div class="stat-card">
+        <div class="label">Avg Time to PR</div>
+        <div class="value purple" id="st-avg-ttpr">&mdash;</div>
+      </div>
     </div>
 
     <!-- Pipeline -->
@@ -451,11 +455,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <thead>
         <tr>
           <th>Session</th><th>Repository</th><th>Issue</th>
-          <th>Status</th><th>Created</th><th>Duration</th>
+          <th>Status</th><th>Created</th><th>Duration</th><th>Time to PR</th>
         </tr>
       </thead>
       <tbody id="sessions-body">
-        <tr><td colspan="6" class="empty">Loading...</td></tr>
+        <tr><td colspan="7" class="empty">Loading...</td></tr>
       </tbody>
     </table>
   </div>
@@ -524,9 +528,10 @@ function relTime(iso) {
 }
 
 function duration(start, end) {
-  if (!start) return "\u2014";
-  var a = new Date(start).getTime();
-  var b = end ? new Date(end).getTime() : Date.now();
+  if (!start && start !== 0) return "\u2014";
+  var a = typeof start === "number" ? start : new Date(start).getTime();
+  var b = typeof end === "number" ? end
+    : (end ? new Date(end).getTime() : Date.now());
   var s = Math.floor((b - a) / 1000);
   if (s < 60) return s + "s";
   var m = Math.floor(s / 60);
@@ -610,6 +615,10 @@ async function loadStats() {
     document.getElementById("st-active").textContent = d.active_sessions;
     document.getElementById("st-completed").textContent = d.completed_sessions;
     document.getElementById("st-errors").textContent = d.errored_sessions;
+    document.getElementById("st-avg-ttpr").textContent =
+      d.avg_time_to_pr_seconds != null
+        ? duration(0, d.avg_time_to_pr_seconds * 1000)
+        : "\u2014";
     document.getElementById("pipe-received").textContent =
       d.total_events + " total";
     document.getElementById("pipe-created").textContent =
@@ -743,13 +752,15 @@ function renderSessions() {
   var tbody = document.getElementById("sessions-body");
   if (!filtered.length) {
     tbody.innerHTML =
-      '<tr><td colspan="6" class="empty">'
+      '<tr><td colspan="7" class="empty">'
       + 'No sessions match the filter</td></tr>';
     return;
   }
   tbody.innerHTML = filtered.map(function(s) {
     var isTerminal = TERMINAL.has(s.status);
     var dur = duration(s.created_at, isTerminal ? s.updated_at : null);
+    var ttpr = s.pr_created_at
+      ? duration(s.created_at, s.pr_created_at) : "\u2014";
     return '<tr class="clickable" onclick="showSessionDetail(\''
       + esc(s.session_id) + '\')">'
       + '<td><a href="' + esc(s.session_url)
@@ -764,7 +775,11 @@ function renderSessions() {
       + "<td>" + dur
       + (isTerminal ? ""
           : ' <span style="color:var(--accent)">&#x25CF;</span>')
-      + "</td></tr>";
+      + "</td>"
+      + '<td>' + (s.pr_created_at
+          ? '<span class="badge badge-purple">' + ttpr + '</span>'
+          : '\u2014') + '</td>'
+      + "</tr>";
   }).join("");
 }
 
@@ -804,6 +819,12 @@ async function showSessionDetail(sessionId) {
       + '<div class="val">' + fmtTime(session.updated_at) + '</div></div>'
       + '<div class="detail-row"><div class="key">Duration</div>'
       + '<div class="val">' + dur + '</div></div>'
+      + '<div class="detail-row"><div class="key">Time to PR</div>'
+      + '<div class="val">' + (session.pr_created_at
+          ? '<span class="badge badge-purple">'
+            + duration(session.created_at, session.pr_created_at)
+            + '</span>'
+          : '\u2014') + '</div></div>'
       + '</div>';
 
     html += '<div class="detail-section"><h3>Status Timeline</h3>';
