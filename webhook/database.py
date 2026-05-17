@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS devin_sessions (
     issue_title TEXT NOT NULL DEFAULT '',
     status      TEXT NOT NULL DEFAULT 'created',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    pr_created_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS session_updates (
@@ -140,6 +141,9 @@ async def log_session_update(
     if not _pool:
         return
     now = _now()
+    has_prs = bool(
+        details and details.get("pull_requests")
+    )
     try:
         async with _pool.acquire() as conn:
             async with conn.transaction():
@@ -162,6 +166,16 @@ async def log_session_update(
                     now,
                     session_id,
                 )
+                if has_prs:
+                    await conn.execute(
+                        """
+                        UPDATE devin_sessions
+                        SET pr_created_at = $1
+                        WHERE session_id = $2 AND pr_created_at IS NULL
+                        """,
+                        now,
+                        session_id,
+                    )
     except Exception:
         logger.exception("Failed to log session update")
 
@@ -228,17 +242,19 @@ async def get_event_by_id(event_id: int) -> dict[str, Any] | None:
 
 async def get_stats() -> dict[str, Any]:
     """Return aggregate statistics for the dashboard overview."""
+    empty_stats: dict[str, Any] = {
+        "total_events": 0,
+        "processed_events": 0,
+        "ignored_events": 0,
+        "total_sessions": 0,
+        "active_sessions": 0,
+        "completed_sessions": 0,
+        "errored_sessions": 0,
+        "avg_time_to_pr_seconds": None,
+        "repos": [],
+    }
     if not _pool:
-        return {
-            "total_events": 0,
-            "processed_events": 0,
-            "ignored_events": 0,
-            "total_sessions": 0,
-            "active_sessions": 0,
-            "completed_sessions": 0,
-            "errored_sessions": 0,
-            "repos": [],
-        }
+        return empty_stats
     try:
         async with _pool.acquire() as conn:
             ev_total = await conn.fetchval("SELECT COUNT(*) FROM webhook_events")
@@ -260,6 +276,10 @@ async def get_stats() -> dict[str, Any]:
                 "SELECT COUNT(*) FROM devin_sessions "
                 "WHERE status IN ('error', 'stopped', 'timed_out')"
             )
+            avg_seconds = await conn.fetchval(
+                "SELECT AVG(EXTRACT(EPOCH FROM (pr_created_at - created_at))) "
+                "FROM devin_sessions WHERE pr_created_at IS NOT NULL"
+            )
             repo_rows = await conn.fetch(
                 "SELECT DISTINCT repo FROM devin_sessions WHERE repo != '' ORDER BY repo"
             )
@@ -271,17 +291,9 @@ async def get_stats() -> dict[str, Any]:
                 "active_sessions": s_active or 0,
                 "completed_sessions": s_completed or 0,
                 "errored_sessions": s_errored or 0,
+                "avg_time_to_pr_seconds": round(float(avg_seconds)) if avg_seconds else None,
                 "repos": [r["repo"] for r in repo_rows],
             }
     except Exception:
         logger.exception("Failed to fetch stats")
-        return {
-            "total_events": 0,
-            "processed_events": 0,
-            "ignored_events": 0,
-            "total_sessions": 0,
-            "active_sessions": 0,
-            "completed_sessions": 0,
-            "errored_sessions": 0,
-            "repos": [],
-        }
+        return empty_stats
